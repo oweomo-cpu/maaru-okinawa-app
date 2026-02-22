@@ -2,8 +2,8 @@ name: 駐車場モニター（パルコシティ & ライカム）
 
 on:
   schedule:
-    # UTC 表記で 5 分おき（日本時間 = UTC+9）
-    - cron: '*/5 * * * *'
+    # UTC 表記で 15 分おき（日本時間 = UTC+9）
+    - cron: '*/15 * * * *'
   workflow_dispatch: # GitHub UI から手動実行も可能
 
 permissions:

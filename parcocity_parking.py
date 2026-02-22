@@ -22,9 +22,12 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-TARGET_URL = "https://www.parcocity.jp/access/"
-BASE_URL   = "https://www.parcocity.jp"
+TARGET_URL  = "https://www.parcocity.jp/access/"
+BASE_URL    = "https://www.parcocity.jp"
 OUTPUT_FILE = Path("parco_now.svg")
+
+# src 属性に含まれていれば駐車場画像とみなすキーワード（いずれか一致）
+SVG_KEYWORDS = ("parking", "per.svg")
 
 HEADERS = {
     "User-Agent": (
@@ -45,24 +48,55 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _is_parking_svg(src: str) -> bool:
+    """src 属性がキーワードを含む SVG かどうかを判定する。"""
+    return any(kw in src for kw in SVG_KEYWORDS) and src.endswith(".svg")
+
+
 def find_svg_url(html: str) -> str | None:
-    """HTML から駐車率 SVG 画像の URL を探して返す。"""
+    """
+    HTML 内のすべての img タグを走査し、駐車率 SVG 画像の URL を返す。
+
+    探索優先順位:
+      1. #factory-car-pc 配下（PC 用コンテナ）
+      2. ページ全体
+
+    src にキーワード（parking / per.svg）を含み、拡張子が .svg の
+    最初の img タグを採用する。
+    """
     soup = BeautifulSoup(html, "lxml")
 
-    # PC 用コンテナを優先、なければページ全体から探す
-    container = soup.find(id="factory_car-pc") or soup.body
-    if container is None:
-        logger.warning("ページ本文が見つかりません。")
-        return None
+    def resolve(src: str) -> str:
+        return src if src.startswith("http") else BASE_URL + src
 
-    for img in container.find_all("img"):
+    # ── 優先: #factory-car-pc コンテナ内を探す ──────────────────
+    container = soup.find(id="factory-car-pc")
+    if container:
+        for img in container.find_all("img"):
+            src = img.get("src", "")
+            if _is_parking_svg(src):
+                logger.info("#factory-car-pc コンテナ内で SVG を発見: %s", src)
+                return resolve(src)
+        logger.warning(
+            "#factory-car-pc は存在しますが、駐車場 SVG が見つかりませんでした。"
+            " ページ全体を検索します。"
+        )
+    else:
+        logger.warning(
+            "#factory-car-pc が見つかりません。ページ全体から img を検索します。"
+        )
+
+    # ── フォールバック: ページ内すべての img を検索 ───────────────
+    for img in soup.find_all("img"):
         src = img.get("src", "")
-        if "parking" in src and src.endswith(".svg"):
-            if src.startswith("http"):
-                return src
-            return BASE_URL + src
+        if _is_parking_svg(src):
+            logger.info("ページ全体の検索で SVG を発見: %s", src)
+            return resolve(src)
 
-    logger.warning("駐車場 SVG 画像が見つかりません。")
+    logger.error(
+        "駐車場 SVG 画像が見つかりませんでした。"
+        " キーワード: %s, 拡張子: .svg", SVG_KEYWORDS
+    )
     return None
 
 

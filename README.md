@@ -1,0 +1,1 @@
+# maaru-okinawa-app

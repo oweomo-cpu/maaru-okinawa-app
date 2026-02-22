@@ -1,0 +1,54 @@
+name: 駐車場モニター（パルコシティ & ライカム）
+
+on:
+  schedule:
+    # UTC 表記で 5 分おき（日本時間 = UTC+9）
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # GitHub UI から手動実行も可能
+
+permissions:
+  contents: write # status.json / rycom_status.json を自動コミットするために必要
+
+jobs:
+  fetch-parking:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: tesseract OCR をインストール
+        run: sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      # ── パルコシティ ──────────────────────────────────────────
+      - name: 【パルコシティ】駐車場状況を取得
+        run: python parcocity_parking.py --status-file status.json
+
+      # ── イオンモール沖縄ライカム ──────────────────────────────
+      - name: 【ライカム】駐車場状況を取得
+        run: python rycom_parking.py --status-file rycom_status.json
+
+      # ── 両ファイルをまとめてコミット ─────────────────────────
+      - name: 変更があれば status ファイルを自動コミット・プッシュ
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add status.json rycom_status.json
+          # 差分がなければスキップ、あればコミット
+          if git diff --staged --quiet; then
+            echo "両ファイルに変更なし。スキップします。"
+          else
+            TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            git commit -m "chore: update parking status ${TIMESTAMP} [skip ci]"
+            git push origin HEAD
+          fi

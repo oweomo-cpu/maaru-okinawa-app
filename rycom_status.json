@@ -1,0 +1,14 @@
+{
+  "fetched_at": "2026-02-22T15:10:53",
+  "fetch_ok": true,
+  "error_msg": "",
+  "sections": [
+    {
+      "name": "イオンモール沖縄ライカム",
+      "occupancy_pct": null,
+      "status": "unknown",
+      "raw_ocr": "dominant_color=other",
+      "detection_method": "color"
+    }
+  ]
+}

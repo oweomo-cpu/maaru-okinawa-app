@@ -4,9 +4,9 @@ parcocity_parking.py
 サンエー浦添西海岸 PARCO CITY の駐車場混雑情報を取得するスクリプト。
 
 ページ構造（2026-02 確認）:
-  - 要素 ID : #factory-car-pc
-  - 子要素  : <img src="/images/parking/pc/parking_<N>per.svg">
-  - <N> が駐車率(%) を表す（例: 10, 50, 80, 100 など）
+  - 要素 ID : #factory_car-pc  (PC) / #factory_car-sp  (SP)
+  - 子要素  : <img src="/images/parking/pc/parking_<STATUS>.svg">
+  - <STATUS> が混雑状況を表す文字列（empty / crowded / almostfull / full など）
 
 使い方:
     # 1 回だけ取得して表示
@@ -51,19 +51,22 @@ FETCH_INTERVAL_SEC = 300
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
-# 駐車率画像の src に含まれるパーセント値を抽出する正規表現
-# 例: /images/parking/pc/parking_10per.svg  →  10
-_OCCUPANCY_RE = re.compile(r"/parking_(\d+)per\.svg", re.IGNORECASE)
+# 駐車状況画像の src に含まれるステータス文字列を抽出する正規表現
+# 例: /images/parking/pc/parking_empty.svg  →  "empty"
+_OCCUPANCY_RE = re.compile(r"/parking_([a-z_]+)\.svg", re.IGNORECASE)
 
-# 駐車率 → ステータス文字列
-def _pct_to_status(pct: int) -> str:
-    if pct >= 100:
-        return "full"
-    if pct >= 80:
-        return "almost_full"
-    if pct >= 50:
-        return "crowded"
-    return "available"
+# 画像ファイル名のステータス文字列 → 内部ステータス / 駐車率(概算)
+_SVG_STATUS_MAP: dict[str, tuple[str, int | None]] = {
+    "empty":      ("available",   10),
+    "little":     ("available",   30),
+    "crowded":    ("crowded",     60),
+    "almostfull": ("almost_full", 85),
+    "full":       ("full",       100),
+}
+
+def _svg_to_status(svg_key: str) -> tuple[str, int | None]:
+    """SVGファイル名キー → (status文字列, 概算駐車率)"""
+    return _SVG_STATUS_MAP.get(svg_key.lower(), ("unknown", None))
 
 # 403 を避けるため、一般的なブラウザに近いヘッダーを送る
 HEADERS = {
@@ -125,26 +128,26 @@ def fetch_html(url: str, timeout: int = 15) -> str:
 
 def parse_parking_html(html: str) -> list[ParkingSection]:
     """
-    HTML 内の #factory-car-pc に含まれる img 要素の src から駐車率を取得する。
+    HTML 内の #factory_car-pc に含まれる img 要素の src から駐車状況を取得する。
 
     ページ例:
-        <div id="factory-car-pc">
-          <img src="/images/parking/pc/parking_50per.svg" alt="...">
-        </div>
+        <p id="factory_car-pc">
+          <img src="/images/parking/pc/parking_empty.svg">
+        </p>
 
     Returns:
         ParkingSection のリスト（現状は施設全体の 1 要素のみ）
     """
     soup = BeautifulSoup(html, "lxml")
 
-    container = soup.find(id="factory-car-pc")
+    container = soup.find(id="factory_car-pc")
     if container is None:
-        logger.warning("#factory-car-pc が見つかりません。ページ構造が変わった可能性があります。")
+        logger.warning("#factory_car-pc が見つかりません。ページ構造が変わった可能性があります。")
         return [ParkingSection(name="パルコシティ全体", status="unknown")]
 
     img = container.find("img")
     if img is None:
-        logger.warning("#factory-car-pc 内に img タグが見つかりません。")
+        logger.warning("#factory_car-pc 内に img タグが見つかりません。")
         return [ParkingSection(name="パルコシティ全体", status="unknown")]
 
     src = img.get("src", "")
@@ -152,15 +155,19 @@ def parse_parking_html(html: str) -> list[ParkingSection]:
 
     match = _OCCUPANCY_RE.search(src)
     if match is None:
-        logger.warning("src からパーセント値を抽出できませんでした: %s", src)
+        logger.warning("src からステータス文字列を抽出できませんでした: %s", src)
         return [ParkingSection(name="パルコシティ全体", img_src=src, status="unknown")]
 
-    pct = int(match.group(1))
+    svg_key = match.group(1)
+    status, pct = _svg_to_status(svg_key)
+    if status == "unknown":
+        logger.warning("未知のSVGキー: %s（マッピング追加が必要です）", svg_key)
+
     return [
         ParkingSection(
             name="パルコシティ全体",
             occupancy_pct=pct,
-            status=_pct_to_status(pct),
+            status=status,
             img_src=src,
         )
     ]

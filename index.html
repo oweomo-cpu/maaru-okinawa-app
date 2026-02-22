@@ -1,434 +1,68 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>まーる沖縄 – 駐車場リアルタイム情報</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            ocean:  { DEFAULT: '#0077B6', light: '#00B4D8', pale: '#CAF0F8' },
-            sky:    { DEFAULT: '#48CAE4', pale: '#E0F7FF' },
-            coral:  '#FF6B6B',
-            sandy:  '#FFF3CD',
-            leaf:   '#2DC653',
-          },
-          fontFamily: {
-            sans: ['"Noto Sans JP"', 'sans-serif'],
-          }
-        }
-      }
-    }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>沖縄 駐車場リアルタイム混雑情報</title>
   <style>
-    /* ゲージアニメーション */
-    @keyframes fillBar {
-      from { width: 0; }
-      to   { width: var(--target-width); }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+      background: #f0f2f5;
+      padding: 24px 16px;
     }
-    .fill-bar { animation: fillBar 1s ease-out forwards; }
-
-    /* カード浮き上がりシャドウ */
-    .card-shadow {
-      box-shadow: 0 8px 32px rgba(0,119,182,0.12);
+    h1 {
+      text-align: center;
+      font-size: 1.2rem;
+      color: #333;
+      margin-bottom: 24px;
     }
-
-    /* 穴場エリアのフェードイン */
-    @keyframes fadeInDown {
-      from { opacity: 0; transform: translateY(-16px); }
-      to   { opacity: 1; transform: translateY(0); }
+    .cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
     }
-    .fade-in-down { animation: fadeInDown 0.5s ease-out forwards; }
-
-    /* 点滅するアイコン（満車時） */
-    @keyframes blink {
-      0%,100% { opacity: 1; }
-      50%      { opacity: 0.3; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
+      padding: 20px;
+      text-align: center;
+      width: 320px;
     }
-    .blink { animation: blink 1.2s ease-in-out infinite; }
+    .card h2 {
+      font-size: .95rem;
+      color: #444;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+    .card img {
+      max-width: 100%;
+      height: auto;
+    }
+    .note {
+      text-align: center;
+      font-size: .75rem;
+      color: #999;
+      margin-top: 20px;
+    }
   </style>
 </head>
+<body>
+  <h1>沖縄 駐車場リアルタイム混雑情報</h1>
 
-<body class="min-h-screen bg-gradient-to-b from-sky-pale via-white to-ocean-pale font-sans">
-
-  <!-- ── ヘッダー ── -->
-  <header class="bg-gradient-to-r from-ocean to-ocean-light shadow-md">
-    <div class="max-w-xl mx-auto px-4 py-5 flex items-center gap-3">
-      <!-- 波アイコン（SVG インライン）-->
-      <svg class="w-10 h-10 text-white flex-shrink-0" viewBox="0 0 48 48" fill="none"
-           xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="rgba(255,255,255,0.2)"/>
-        <path d="M8 28 Q14 22 20 28 Q26 34 32 28 Q38 22 44 28"
-              stroke="white" stroke-width="3" stroke-linecap="round" fill="none"/>
-        <path d="M8 20 Q14 14 20 20 Q26 26 32 20 Q38 14 44 20"
-              stroke="rgba(255,255,255,0.6)" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-      </svg>
-      <div>
-        <h1 class="text-white text-2xl font-black tracking-wide leading-tight">まーる沖縄</h1>
-        <p class="text-sky-pale text-sm font-medium leading-tight">駐車場リアルタイム情報</p>
-      </div>
-      <!-- 自動更新ボタン -->
-      <button id="refreshBtn" onclick="loadAll()"
-              class="ml-auto bg-white/20 hover:bg-white/30 active:scale-95 text-white text-sm
-                     font-bold px-4 py-2 rounded-full transition-all flex items-center gap-1.5">
-        <svg id="refreshIcon" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-          <path fill-rule="evenodd"
-                d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002
-                   5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1
-                   1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1
-                   1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                clip-rule="evenodd"/>
-        </svg>
-        更新
-      </button>
+  <div class="cards">
+    <div class="card">
+      <h2>サンエー浦添西海岸<br>PARCO CITY</h2>
+      <img src="parco_now.svg" alt="パルコシティ 駐車場混雑状況">
     </div>
-  </header>
-
-  <!-- ── メインコンテンツ ── -->
-  <main class="max-w-xl mx-auto px-4 py-6 space-y-5">
-
-    <!-- 読み込み中スピナー -->
-    <div id="loadingArea" class="flex flex-col items-center py-16 gap-4">
-      <div class="w-14 h-14 border-4 border-ocean/30 border-t-ocean rounded-full animate-spin"></div>
-      <p class="text-ocean text-lg font-bold">データを取得中…</p>
+    <div class="card">
+      <h2>イオンモール沖縄<br>ライカム</h2>
+      <img src="rycom_now.gif" alt="ライカム 駐車場混雑状況">
     </div>
+  </div>
 
-    <!-- エラー表示 -->
-    <div id="errorArea" class="hidden bg-red-50 border border-red-200 rounded-2xl p-5 text-center">
-      <p class="text-2xl mb-2">⚠️</p>
-      <p class="text-red-700 font-bold text-lg">データを読み込めませんでした</p>
-      <p id="errorMsg" class="text-red-500 text-sm mt-1"></p>
-      <button onclick="loadAll()"
-              class="mt-4 bg-red-500 hover:bg-red-600 text-white font-bold px-6 py-2 rounded-full text-sm transition-colors">
-        再読み込み
-      </button>
-    </div>
-
-    <!-- 駐車場カード群（JS で生成） -->
-    <div id="cardsArea" class="hidden space-y-4"></div>
-
-    <!-- 穴場スポット（両方80%以上の場合のみ表示） -->
-    <div id="honeSpotArea" class="hidden fade-in-down"></div>
-
-    <!-- 最終更新 -->
-    <div id="updatedArea" class="hidden text-center text-gray-400 text-sm pb-4">
-      <span id="updatedText"></span>
-    </div>
-
-  </main>
-
-  <!-- ── フッター ── -->
-  <footer class="text-center text-xs text-gray-400 pb-6 px-4">
-    <p>データは自動取得です。正確な情報は各施設へご確認ください。</p>
-    <p class="mt-1">© 2026 まーる沖縄</p>
-  </footer>
-
-  <!-- ── JavaScript ── -->
-  <script>
-    /* =========================================================
-       定数・設定
-    ========================================================= */
-
-    // 穴場スポット一覧（仮データ）
-    const HONESPOT_LIST = [
-      {
-        name: "北谷町美浜ビーチ周辺",
-        note: "ゆいレール＋バス利用で駐車場不要。カフェも充実。",
-        icon: "🌊",
-      },
-      {
-        name: "沖縄市コザ商店街",
-        note: "個性派ショップや地元飯が楽しめる穴場エリア。無料駐車場あり。",
-        icon: "🎵",
-      },
-      {
-        name: "南城市・知念岬公園",
-        note: "青い海と空を独り占め。駐車場は無料で広々。",
-        icon: "🌅",
-      },
-      {
-        name: "浦添グランドモール（パルコシティ東側）",
-        note: "パルコ本館が混雑中でも東側の立体駐車場は比較的空き多め。",
-        icon: "🅿️",
-      },
-      {
-        name: "宜野湾市 はごろも公園",
-        note: "地元の家族連れに人気。大型駐車場完備でゆったり過ごせます。",
-        icon: "🌿",
-      },
-    ];
-
-    /* =========================================================
-       ステータス → UI マッピング
-    ========================================================= */
-    function getStatusUI(pct, status) {
-      // 数値優先、なければ status 文字列で判定
-      const n = (typeof pct === 'number') ? pct : -1;
-      const s = status || 'unknown';
-
-      if (n >= 80 || s === 'full' || s === 'almost_full') {
-        return {
-          label:   n >= 100 || s === 'full' ? '満車' : 'ほぼ満車',
-          color:   'from-red-400 to-coral',
-          bg:      'bg-red-50',
-          border:  'border-red-200',
-          text:    'text-red-600',
-          barBg:   'bg-red-400',
-          icon:    '🔴',
-          blink:   n >= 100 || s === 'full',
-        };
-      }
-      if (n >= 50 || s === 'crowded') {
-        return {
-          label:   '混雑',
-          color:   'from-yellow-400 to-amber-400',
-          bg:      'bg-amber-50',
-          border:  'border-amber-200',
-          text:    'text-amber-600',
-          barBg:   'bg-amber-400',
-          icon:    '🟡',
-          blink:   false,
-        };
-      }
-      if (n >= 0 || s === 'available') {
-        return {
-          label:   '空きあり',
-          color:   'from-emerald-400 to-leaf',
-          bg:      'bg-emerald-50',
-          border:  'border-emerald-200',
-          text:    'text-emerald-600',
-          barBg:   'bg-emerald-400',
-          icon:    '🟢',
-          blink:   false,
-        };
-      }
-      return {
-        label:   '情報なし',
-        color:   'from-gray-300 to-gray-400',
-        bg:      'bg-gray-50',
-        border:  'border-gray-200',
-        text:    'text-gray-500',
-        barBg:   'bg-gray-300',
-        icon:    '⚪',
-        blink:   false,
-      };
-    }
-
-    /* =========================================================
-       日時フォーマット（日本語）
-    ========================================================= */
-    function formatJST(isoStr) {
-      try {
-        const d = new Date(isoStr);
-        return d.toLocaleString('ja-JP', {
-          timeZone: 'Asia/Tokyo',
-          month: 'long', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-          hour12: false,
-        });
-      } catch {
-        return isoStr;
-      }
-    }
-
-    /* =========================================================
-       カード HTML 生成
-    ========================================================= */
-    function buildCard(mallName, sublabel, emoji, data) {
-      const section = (data.sections && data.sections[0]) || {};
-      const pct    = section.occupancy_pct;
-      const status = section.status;
-      const ui     = getStatusUI(pct, status);
-      const barPct = typeof pct === 'number' ? Math.min(pct, 100) : 0;
-      const method = section.detection_method || '';
-      const methodLabel = method === 'ocr' ? 'OCR' : method === 'color' ? '色分析' : '';
-
-      return `
-        <div class="card-shadow rounded-3xl overflow-hidden border ${ui.border}">
-          <!-- カードヘッダー（グラデーション帯）-->
-          <div class="bg-gradient-to-r ${ui.color} px-5 py-3 flex items-center gap-2">
-            <span class="text-2xl">${emoji}</span>
-            <div>
-              <p class="text-white text-xs font-semibold opacity-80 leading-none">${sublabel}</p>
-              <p class="text-white text-lg font-black leading-tight">${mallName}</p>
-            </div>
-          </div>
-
-          <!-- カードボディ -->
-          <div class="${ui.bg} px-5 py-5">
-
-            <!-- ステータスバッジ + 数値 -->
-            <div class="flex items-center justify-between mb-4">
-              <div class="flex items-center gap-2">
-                <span class="text-3xl ${ui.blink ? 'blink' : ''}">${ui.icon}</span>
-                <span class="${ui.text} text-2xl font-black">${ui.label}</span>
-              </div>
-              <div class="text-right">
-                ${typeof pct === 'number'
-                  ? `<span class="${ui.text} text-4xl font-black">${pct}</span>
-                     <span class="${ui.text} text-xl font-bold">%</span>`
-                  : `<span class="text-gray-400 text-lg font-bold">---</span>`
-                }
-                <p class="text-gray-400 text-xs">駐車率</p>
-              </div>
-            </div>
-
-            <!-- プログレスバー -->
-            <div class="bg-white/70 rounded-full h-4 overflow-hidden shadow-inner">
-              <div class="${ui.barBg} h-full rounded-full fill-bar"
-                   style="--target-width:${barPct}%; width:0"></div>
-            </div>
-            <div class="flex justify-between text-gray-400 text-xs mt-1">
-              <span>0%</span>
-              <span>50%</span>
-              <span>100%</span>
-            </div>
-
-            <!-- フッター情報 -->
-            <div class="mt-3 flex items-center justify-between flex-wrap gap-1">
-              <p class="text-gray-400 text-xs">
-                最終更新：
-                <span class="text-gray-500 font-semibold">${formatJST(data.fetched_at)}</span>
-              </p>
-              ${methodLabel
-                ? `<span class="bg-white text-gray-400 text-xs px-2 py-0.5 rounded-full border border-gray-200">
-                     取得方法: ${methodLabel}
-                   </span>`
-                : ''
-              }
-            </div>
-
-            ${!data.fetch_ok
-              ? `<p class="mt-2 text-red-500 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
-                   ⚠️ 取得エラー: ${data.error_msg || '詳細不明'}
-                 </p>`
-              : ''
-            }
-          </div>
-        </div>
-      `;
-    }
-
-    /* =========================================================
-       穴場スポットエリア HTML 生成
-    ========================================================= */
-    function buildHoneSpot() {
-      const items = HONESPOT_LIST.map(s => `
-        <li class="flex items-start gap-3 py-3 border-b border-orange-100 last:border-0">
-          <span class="text-2xl flex-shrink-0">${s.icon}</span>
-          <div>
-            <p class="text-gray-800 font-bold text-base leading-tight">${s.name}</p>
-            <p class="text-gray-500 text-sm mt-0.5">${s.note}</p>
-          </div>
-        </li>
-      `).join('');
-
-      return `
-        <div class="bg-gradient-to-br from-orange-50 to-amber-50 border-2 border-orange-200
-                    rounded-3xl overflow-hidden card-shadow">
-          <div class="bg-gradient-to-r from-orange-400 to-amber-400 px-5 py-4">
-            <p class="text-white text-xl font-black">🌴 近くの穴場スポットへ行きませんか？</p>
-            <p class="text-orange-100 text-sm mt-0.5">
-              両方のモールが混雑中です。ゆったり過ごせる場所をご紹介します。
-            </p>
-          </div>
-          <ul class="px-5 py-2">
-            ${items}
-          </ul>
-          <p class="text-gray-400 text-xs text-center pb-4">
-            ※ 情報は参考です。現地の状況をご確認ください。
-          </p>
-        </div>
-      `;
-    }
-
-    /* =========================================================
-       データ取得・描画メイン
-    ========================================================= */
-    async function loadAll() {
-      // アイコン回転
-      const icon = document.getElementById('refreshIcon');
-      icon.classList.add('animate-spin');
-
-      // UI リセット
-      document.getElementById('loadingArea').classList.remove('hidden');
-      document.getElementById('errorArea').classList.add('hidden');
-      document.getElementById('cardsArea').classList.add('hidden');
-      document.getElementById('honeSpotArea').classList.add('hidden');
-      document.getElementById('updatedArea').classList.add('hidden');
-
-      try {
-        // キャッシュ回避のためタイムスタンプを付与
-        const ts = `?_=${Date.now()}`;
-        const [parcoRes, rycomRes] = await Promise.all([
-          fetch(`status.json${ts}`),
-          fetch(`rycom_status.json${ts}`),
-        ]);
-
-        if (!parcoRes.ok) throw new Error(`status.json の取得失敗 (HTTP ${parcoRes.status})`);
-        if (!rycomRes.ok) throw new Error(`rycom_status.json の取得失敗 (HTTP ${rycomRes.status})`);
-
-        const parcoData = await parcoRes.json();
-        const rycomData = await rycomRes.json();
-
-        // カード描画
-        const cardsArea = document.getElementById('cardsArea');
-        cardsArea.innerHTML =
-          buildCard('サンエー浦添西海岸', 'PARCO CITY',   '🛍️', parcoData) +
-          buildCard('イオンモール沖縄',   'ライカム', '🏬', rycomData);
-        cardsArea.classList.remove('hidden');
-
-        // 両方80%以上か判定（数値がなければ status で判断）
-        function isCrowded(d) {
-          const s = (d.sections && d.sections[0]) || {};
-          if (typeof s.occupancy_pct === 'number') return s.occupancy_pct >= 80;
-          return s.status === 'full' || s.status === 'almost_full';
-        }
-        const bothCrowded = isCrowded(parcoData) && isCrowded(rycomData);
-
-        const honeArea = document.getElementById('honeSpotArea');
-        if (bothCrowded) {
-          honeArea.innerHTML = buildHoneSpot();
-          honeArea.classList.remove('hidden');
-        } else {
-          honeArea.classList.add('hidden');
-        }
-
-        // 最終更新（ページ取得時刻）
-        const now = new Date().toLocaleString('ja-JP', {
-          timeZone: 'Asia/Tokyo',
-          month: 'long', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        });
-        document.getElementById('updatedText').textContent = `ページ更新: ${now}`;
-        document.getElementById('updatedArea').classList.remove('hidden');
-
-        document.getElementById('loadingArea').classList.add('hidden');
-
-      } catch (err) {
-        console.error(err);
-        document.getElementById('loadingArea').classList.add('hidden');
-        document.getElementById('errorMsg').textContent = err.message;
-        document.getElementById('errorArea').classList.remove('hidden');
-      } finally {
-        icon.classList.remove('animate-spin');
-      }
-    }
-
-    /* =========================================================
-       初期実行 & 5分自動更新
-    ========================================================= */
-    loadAll();
-    setInterval(loadAll, 5 * 60 * 1000); // 5分ごと
-  </script>
-
+  <p class="note">※ 約5分ごとに自動更新されます</p>
 </body>
 </html>

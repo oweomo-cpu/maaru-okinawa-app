@@ -16,6 +16,7 @@ parcocity_parking.py
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -93,10 +94,33 @@ def find_svg_url(html: str) -> str | None:
             logger.info("ページ全体の検索で SVG を発見: %s", src)
             return resolve(src)
 
+    # ── デバッグ: ページ内の全 img src を列挙 ────────────────────
+    all_imgs = [img.get("src", "") for img in soup.find_all("img")]
     logger.error(
         "駐車場 SVG 画像が見つかりませんでした。"
         " キーワード: %s, 拡張子: .svg", SVG_KEYWORDS
     )
+    logger.error("ページ内の img src 一覧 (%d 件):", len(all_imgs))
+    for s in all_imgs:
+        logger.error("  %s", s)
+
+    # ── デバッグ: HTML 内の .svg 文字列を全検索 ──────────────────
+    svg_refs = re.findall(r'["\']([^"\']*\.svg[^"\']*)["\']', html)
+    logger.error("HTML 内の .svg 参照 (%d 件):", len(svg_refs))
+    for ref in svg_refs[:30]:
+        logger.error("  %s", ref)
+
+    # ── デバッグ: id/class に car や park を含む要素を列挙 ────────
+    suspects = soup.find_all(
+        lambda tag: any(
+            kw in (tag.get("id", "") + " ".join(tag.get("class", [])))
+            for kw in ("car", "park", "parking")
+        )
+    )
+    logger.error("id/class に car/park を含む要素 (%d 件):", len(suspects))
+    for el in suspects[:20]:
+        logger.error("  <%s id=%r class=%r>", el.name, el.get("id"), el.get("class"))
+
     return None
 
 
@@ -104,6 +128,11 @@ def main() -> None:
     logger.info("GET %s", TARGET_URL)
     resp = requests.get(TARGET_URL, headers=HEADERS, timeout=15)
     resp.raise_for_status()
+
+    # デバッグ用: 取得した HTML を保存
+    debug_html = Path("debug_page.html")
+    debug_html.write_text(resp.text, encoding="utf-8")
+    logger.info("デバッグ用 HTML 保存: %s (%d bytes)", debug_html, len(resp.text))
 
     svg_url = find_svg_url(resp.text)
     if svg_url is None:

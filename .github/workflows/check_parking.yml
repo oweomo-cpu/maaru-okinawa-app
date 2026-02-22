@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # GitHub UI から手動実行も可能
 
 permissions:
-  contents: write # status.json / rycom_status.json を自動コミットするために必要
+  contents: write # 画像ファイルを自動コミットするために必要
 
 jobs:
   fetch-parking:
@@ -24,31 +24,28 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: tesseract OCR をインストール
-        run: sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
-
       - name: 依存パッケージをインストール
-        run: pip install -r requirements.txt
+        run: pip install requests beautifulsoup4 lxml
 
       # ── パルコシティ ──────────────────────────────────────────
-      - name: 【パルコシティ】駐車場状況を取得
-        run: python parcocity_parking.py --status-file status.json
+      - name: 【パルコシティ】駐車率 SVG を取得・保存
+        run: python parcocity_parking.py
 
       # ── イオンモール沖縄ライカム ──────────────────────────────
-      - name: 【ライカム】駐車場状況を取得
-        run: python rycom_parking.py --status-file rycom_status.json
+      - name: 【ライカム】駐車状況 GIF を取得・保存
+        run: python rycom_parking.py
 
-      # ── 両ファイルをまとめてコミット ─────────────────────────
-      - name: 変更があれば status ファイルを自動コミット・プッシュ
+      # ── 画像ファイルをまとめてコミット ────────────────────────
+      - name: 変更があれば画像ファイルを自動コミット・プッシュ
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add status.json rycom_status.json
+          git add parco_now.svg rycom_now.gif
           # 差分がなければスキップ、あればコミット
           if git diff --staged --quiet; then
             echo "両ファイルに変更なし。スキップします。"
           else
             TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            git commit -m "chore: update parking status ${TIMESTAMP} [skip ci]"
+            git commit -m "chore: update parking images ${TIMESTAMP} [skip ci]"
             git push origin HEAD
           fi

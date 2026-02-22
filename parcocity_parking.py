@@ -3,20 +3,11 @@ parcocity_parking.py
 ~~~~~~~~~~~~~~~~~~~~
 サンエー浦添西海岸 PARCO CITY の駐車場混雑情報を取得するスクリプト。
 
-ページ構造（2026-02 確認）:
-  - 要素 ID : #factory_car-pc  (PC) / #factory_car-sp  (SP)
-  - 子要素  : <img src="/images/parking/pc/parking_<STATUS>.svg">
-  - <STATUS> が混雑状況を表す文字列（empty / crowded / almostfull / full など）
+アクセスページから駐車率 SVG 画像の URL を特定し、
+その画像を parco_now.svg としてダウンロード保存する。
 
 使い方:
-    # 1 回だけ取得して表示
     python parcocity_parking.py
-
-    # 最新状況を status.json に上書き保存（GitHub Actions 用）
-    python parcocity_parking.py --status-file status.json
-
-    # 5 分おきに無限ループ（Ctrl+C で停止）
-    python parcocity_parking.py --loop
 
 必要パッケージ:
     pip install requests beautifulsoup4 lxml
@@ -24,51 +15,17 @@ parcocity_parking.py
 
 from __future__ import annotations
 
-import argparse
-import csv
-import json
 import logging
-import re
-import time
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
+import sys
 from pathlib import Path
-from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
 
-# ---------------------------------------------------------------------------
-# 設定
-# ---------------------------------------------------------------------------
-
 TARGET_URL = "https://www.parcocity.jp/access/"
+BASE_URL   = "https://www.parcocity.jp"
+OUTPUT_FILE = Path("parco_now.svg")
 
-# リクエスト間隔（秒）― サーバーへの負荷を抑えるため 60 秒以上推奨
-FETCH_INTERVAL_SEC = 300
-
-# データ保存先
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-
-# 駐車状況画像の src に含まれるステータス文字列を抽出する正規表現
-# 例: /images/parking/pc/parking_empty.svg  →  "empty"
-_OCCUPANCY_RE = re.compile(r"/parking_([a-z_]+)\.svg", re.IGNORECASE)
-
-# 画像ファイル名のステータス文字列 → 内部ステータス / 駐車率(概算)
-_SVG_STATUS_MAP: dict[str, tuple[str, int | None]] = {
-    "empty":      ("available",   10),
-    "little":     ("available",   30),
-    "crowded":    ("crowded",     60),
-    "almostfull": ("almost_full", 85),
-    "full":       ("full",       100),
-}
-
-def _svg_to_status(svg_key: str) -> tuple[str, int | None]:
-    """SVGファイル名キー → (status文字列, 概算駐車率)"""
-    return _SVG_STATUS_MAP.get(svg_key.lower(), ("unknown", None))
-
-# 403 を避けるため、一般的なブラウザに近いヘッダーを送る
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -88,227 +45,47 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# データモデル
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ParkingSection:
-    """駐車場エリアの状態。"""
-
-    name: str                              # エリア名（現状は施設全体のみ）
-    occupancy_pct: Optional[int] = None   # 駐車率 0〜100（取得できない場合 None）
-    status: str = "unknown"               # available / crowded / almost_full / full / unknown
-    img_src: str = ""                     # 取得した img src（デバッグ用）
-
-
-@dataclass
-class ParkingSnapshot:
-    """ある時点のスナップショット。"""
-
-    fetched_at: str = field(
-        default_factory=lambda: datetime.now().isoformat(timespec="seconds")
-    )
-    sections: list[ParkingSection] = field(default_factory=list)
-    fetch_ok: bool = True
-    error_msg: str = ""
-
-
-# ---------------------------------------------------------------------------
-# スクレイピング
-# ---------------------------------------------------------------------------
-
-def fetch_html(url: str, timeout: int = 15) -> str:
-    """指定 URL の HTML を取得して返す。失敗時は requests.HTTPError を送出。"""
-    logger.info("GET %s", url)
-    response = requests.get(url, headers=HEADERS, timeout=timeout)
-    response.raise_for_status()
-    return response.text
-
-
-def parse_parking_html(html: str) -> list[ParkingSection]:
-    """
-    HTML 内の #factory_car-pc に含まれる img 要素の src から駐車状況を取得する。
-
-    ページ例:
-        <p id="factory_car-pc">
-          <img src="/images/parking/pc/parking_empty.svg">
-        </p>
-
-    Returns:
-        ParkingSection のリスト（現状は施設全体の 1 要素のみ）
-    """
+def find_svg_url(html: str) -> str | None:
+    """HTML から駐車率 SVG 画像の URL を探して返す。"""
     soup = BeautifulSoup(html, "lxml")
 
-    container = soup.find(id="factory_car-pc")
+    # PC 用コンテナを優先、なければページ全体から探す
+    container = soup.find(id="factory_car-pc") or soup.body
     if container is None:
-        logger.warning("#factory_car-pc が見つかりません。ページ構造が変わった可能性があります。")
-        return [ParkingSection(name="パルコシティ全体", status="unknown")]
+        logger.warning("ページ本文が見つかりません。")
+        return None
 
-    img = container.find("img")
-    if img is None:
-        logger.warning("#factory_car-pc 内に img タグが見つかりません。")
-        return [ParkingSection(name="パルコシティ全体", status="unknown")]
+    for img in container.find_all("img"):
+        src = img.get("src", "")
+        if "parking" in src and src.endswith(".svg"):
+            if src.startswith("http"):
+                return src
+            return BASE_URL + src
 
-    src = img.get("src", "")
-    logger.debug("img src: %s", src)
+    logger.warning("駐車場 SVG 画像が見つかりません。")
+    return None
 
-    match = _OCCUPANCY_RE.search(src)
-    if match is None:
-        logger.warning("src からステータス文字列を抽出できませんでした: %s", src)
-        return [ParkingSection(name="パルコシティ全体", img_src=src, status="unknown")]
-
-    svg_key = match.group(1)
-    status, pct = _svg_to_status(svg_key)
-    if status == "unknown":
-        logger.warning("未知のSVGキー: %s（マッピング追加が必要です）", svg_key)
-
-    return [
-        ParkingSection(
-            name="パルコシティ全体",
-            occupancy_pct=pct,
-            status=status,
-            img_src=src,
-        )
-    ]
-
-
-def get_parking_snapshot() -> ParkingSnapshot:
-    """1 回分の駐車場情報を取得して ParkingSnapshot を返す。"""
-    snapshot = ParkingSnapshot()
-    try:
-        html = fetch_html(TARGET_URL)
-        snapshot.sections = parse_parking_html(html)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("取得失敗: %s", exc)
-        snapshot.fetch_ok = False
-        snapshot.error_msg = str(exc)
-    return snapshot
-
-
-# ---------------------------------------------------------------------------
-# 保存
-# ---------------------------------------------------------------------------
-
-def save_status_json(snapshot: ParkingSnapshot, path: Path) -> None:
-    """最新の駐車状況を JSON ファイルに上書き保存する（GitHub Actions 用）。
-
-    parking_log.jsonl と異なり追記ではなく上書きするため、
-    常に「現在の状態」だけが保存される。
-    """
-    record = {
-        "fetched_at": snapshot.fetched_at,
-        "fetch_ok": snapshot.fetch_ok,
-        "error_msg": snapshot.error_msg,
-        "sections": [asdict(s) for s in snapshot.sections],
-    }
-    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("status JSON 保存: %s", path)
-
-
-def save_jsonl(snapshot: ParkingSnapshot) -> Path:
-    """スナップショットを JSONL（1 行 1 レコード）に追記保存する。"""
-    path = DATA_DIR / "parking_log.jsonl"
-    record = {
-        "fetched_at": snapshot.fetched_at,
-        "fetch_ok": snapshot.fetch_ok,
-        "error_msg": snapshot.error_msg,
-        "sections": [asdict(s) for s in snapshot.sections],
-    }
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(record, ensure_ascii=False) + "\n")
-    logger.info("JSONL 保存: %s", path)
-    return path
-
-
-def save_csv(snapshot: ParkingSnapshot) -> Path:
-    """スナップショットを CSV に追記保存する。"""
-    path = DATA_DIR / "parking_log.csv"
-    fieldnames = ["fetched_at", "section_name", "occupancy_pct", "status", "img_src"]
-    write_header = not path.exists()
-    with path.open("a", newline="", encoding="utf-8") as fp:
-        writer = csv.DictWriter(fp, fieldnames=fieldnames)
-        if write_header:
-            writer.writeheader()
-        for s in snapshot.sections:
-            writer.writerow(
-                {
-                    "fetched_at": snapshot.fetched_at,
-                    "section_name": s.name,
-                    "occupancy_pct": s.occupancy_pct,
-                    "status": s.status,
-                    "img_src": s.img_src,
-                }
-            )
-    logger.info("CSV 保存: %s", path)
-    return path
-
-
-# ---------------------------------------------------------------------------
-# 表示
-# ---------------------------------------------------------------------------
-
-_STATUS_LABEL = {
-    "available":   "空き あり",
-    "crowded":     "混雑",
-    "almost_full": "ほぼ満車",
-    "full":        "満車",
-    "unknown":     "不明",
-}
-
-def _print_snapshot(snapshot: ParkingSnapshot) -> None:
-    print(f"\n--- {snapshot.fetched_at} ---")
-    if not snapshot.fetch_ok:
-        print(f"  [ERROR] {snapshot.error_msg}")
-        return
-    for s in snapshot.sections:
-        pct_str = f"{s.occupancy_pct}%" if s.occupancy_pct is not None else "不明"
-        label = _STATUS_LABEL.get(s.status, s.status)
-        print(f"  {s.name}: 駐車率 {pct_str}  →  {label}")
-
-
-# ---------------------------------------------------------------------------
-# エントリポイント
-# ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="パルコシティ 駐車場モニター")
-    parser.add_argument(
-        "--loop",
-        action="store_true",
-        help=f"Ctrl+C まで {FETCH_INTERVAL_SEC} 秒おきに繰り返し取得する",
+    logger.info("GET %s", TARGET_URL)
+    resp = requests.get(TARGET_URL, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+
+    svg_url = find_svg_url(resp.text)
+    if svg_url is None:
+        logger.error("SVG URL の取得に失敗しました。")
+        sys.exit(1)
+
+    logger.info("SVG URL: %s", svg_url)
+    svg_resp = requests.get(
+        svg_url,
+        headers={**HEADERS, "Accept": "image/svg+xml,*/*"},
+        timeout=15,
     )
-    parser.add_argument(
-        "--status-file",
-        metavar="PATH",
-        help="最新状況を指定 JSON ファイルに上書き保存する（GitHub Actions 用）",
-    )
-    args = parser.parse_args()
+    svg_resp.raise_for_status()
 
-    logger.info("=== パルコシティ 駐車場モニター 開始 ===")
-
-    count = 0
-    try:
-        while True:
-            snapshot = get_parking_snapshot()
-            _print_snapshot(snapshot)
-
-            if args.status_file:
-                save_status_json(snapshot, Path(args.status_file))
-            else:
-                save_jsonl(snapshot)
-                save_csv(snapshot)
-
-            count += 1
-
-            if not args.loop:
-                break
-            logger.info("%d 秒後に再取得します...", FETCH_INTERVAL_SEC)
-            time.sleep(FETCH_INTERVAL_SEC)
-    except KeyboardInterrupt:
-        logger.info("中断しました。")
-
-    logger.info("=== 終了 (取得回数: %d) ===", count)
+    OUTPUT_FILE.write_bytes(svg_resp.content)
+    logger.info("保存完了: %s (%d bytes)", OUTPUT_FILE, len(svg_resp.content))
 
 
 if __name__ == "__main__":

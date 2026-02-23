@@ -1,34 +1,33 @@
 """
 parcocity_parking.py
 ~~~~~~~~~~~~~~~~~~~~
-サンエー浦添西海岸 PARCO CITY の駐車場混雑情報を取得するスクリプト。
+サンエー浦添西海岸 PARCO CITY の駐車場混雑情報を XML から取得するスクリプト。
 
-アクセスページから駐車率 SVG 画像の URL を特定し、
-その画像を parco_now.svg としてダウンロード保存する。
+駐車場管理システム (cnt.parkingweb.jp) の XML エンドポイントを直接叩き、
+解析結果を parco_status.json に保存する。
 
 使い方:
     python parcocity_parking.py
 
 必要パッケージ:
-    pip install requests beautifulsoup4 lxml
+    pip install requests
 """
 
 from __future__ import annotations
 
+import json
 import logging
-import re
 import sys
+import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
-from bs4 import BeautifulSoup
 
-TARGET_URL  = "https://www.parcocity.jp/access/"
-BASE_URL    = "https://www.parcocity.jp"
-OUTPUT_FILE = Path("parco_now.svg")
-
-# src 属性に含まれていれば駐車場画像とみなすキーワード（いずれか一致）
-SVG_KEYWORDS = ("parking", "per.svg")
+XML_URL = (
+    "https://cnt.parkingweb.jp/000400/000427/000001/001/0427parking_status.xml"
+)
+OUTPUT_FILE = Path("parco_status.json")
 
 HEADERS = {
     "User-Agent": (
@@ -36,7 +35,7 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/122.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "application/xml,text/xml,*/*;q=0.8",
     "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
     "Referer": "https://www.parcocity.jp/",
 }
@@ -49,106 +48,39 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _is_parking_svg(src: str) -> bool:
-    """src 属性がキーワードを含む SVG かどうかを判定する。"""
-    return any(kw in src for kw in SVG_KEYWORDS) and src.endswith(".svg")
-
-
-def find_svg_url(html: str) -> str | None:
-    """
-    HTML 内のすべての img タグを走査し、駐車率 SVG 画像の URL を返す。
-
-    探索優先順位:
-      1. #factory-car-pc 配下（PC 用コンテナ）
-      2. ページ全体
-
-    src にキーワード（parking / per.svg）を含み、拡張子が .svg の
-    最初の img タグを採用する。
-    """
-    soup = BeautifulSoup(html, "lxml")
-
-    def resolve(src: str) -> str:
-        return src if src.startswith("http") else BASE_URL + src
-
-    # ── 優先: #factory-car-pc コンテナ内を探す ──────────────────
-    container = soup.find(id="factory-car-pc")
-    if container:
-        for img in container.find_all("img"):
-            src = img.get("src", "")
-            if _is_parking_svg(src):
-                logger.info("#factory-car-pc コンテナ内で SVG を発見: %s", src)
-                return resolve(src)
-        logger.warning(
-            "#factory-car-pc は存在しますが、駐車場 SVG が見つかりませんでした。"
-            " ページ全体を検索します。"
-        )
-    else:
-        logger.warning(
-            "#factory-car-pc が見つかりません。ページ全体から img を検索します。"
-        )
-
-    # ── フォールバック: ページ内すべての img を検索 ───────────────
-    for img in soup.find_all("img"):
-        src = img.get("src", "")
-        if _is_parking_svg(src):
-            logger.info("ページ全体の検索で SVG を発見: %s", src)
-            return resolve(src)
-
-    # ── デバッグ: ページ内の全 img src を列挙 ────────────────────
-    all_imgs = [img.get("src", "") for img in soup.find_all("img")]
-    logger.error(
-        "駐車場 SVG 画像が見つかりませんでした。"
-        " キーワード: %s, 拡張子: .svg", SVG_KEYWORDS
-    )
-    logger.error("ページ内の img src 一覧 (%d 件):", len(all_imgs))
-    for s in all_imgs:
-        logger.error("  %s", s)
-
-    # ── デバッグ: HTML 内の .svg 文字列を全検索 ──────────────────
-    svg_refs = re.findall(r'["\']([^"\']*\.svg[^"\']*)["\']', html)
-    logger.error("HTML 内の .svg 参照 (%d 件):", len(svg_refs))
-    for ref in svg_refs[:30]:
-        logger.error("  %s", ref)
-
-    # ── デバッグ: id/class に car や park を含む要素を列挙 ────────
-    suspects = soup.find_all(
-        lambda tag: any(
-            kw in (tag.get("id", "") + " ".join(tag.get("class", [])))
-            for kw in ("car", "park", "parking")
-        )
-    )
-    logger.error("id/class に car/park を含む要素 (%d 件):", len(suspects))
-    for el in suspects[:20]:
-        logger.error("  <%s id=%r class=%r>", el.name, el.get("id"), el.get("class"))
-
-    return None
+def parse_parking_xml(xml_text: str) -> dict:
+    """XML を解析して全要素を辞書で返す。"""
+    root = ET.fromstring(xml_text)
+    data: dict = {}
+    for elem in root.iter():
+        text = (elem.text or "").strip()
+        if text:
+            data[elem.tag] = text
+            logger.info("  XML要素  %s = %s", elem.tag, text)
+    return data
 
 
 def main() -> None:
-    logger.info("GET %s", TARGET_URL)
-    resp = requests.get(TARGET_URL, headers=HEADERS, timeout=15)
+    # キャッシュバスター付き URL（ブラウザと同じ挙動）
+    url = f"{XML_URL}?_={int(time.time() * 1000)}"
+    logger.info("GET %s", url)
+
+    resp = requests.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
+    logger.info("取得完了 (%d bytes)", len(resp.content))
 
-    # デバッグ用: 取得した HTML を保存
-    debug_html = Path("debug_page.html")
-    debug_html.write_text(resp.text, encoding="utf-8")
-    logger.info("デバッグ用 HTML 保存: %s (%d bytes)", debug_html, len(resp.text))
+    # デバッグ用: 生の XML をログ出力
+    logger.info("Raw XML:\n%s", resp.text)
 
-    svg_url = find_svg_url(resp.text)
-    if svg_url is None:
-        logger.error("SVG URL の取得に失敗しました。")
+    data = parse_parking_xml(resp.text)
+    if not data:
+        logger.error("XML の解析結果が空でした。")
         sys.exit(1)
 
-    logger.info("SVG URL: %s", svg_url)
-    svg_resp = requests.get(
-        svg_url,
-        headers={**HEADERS, "Accept": "image/svg+xml,*/*"},
-        timeout=15,
+    OUTPUT_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    svg_resp.raise_for_status()
-
-    OUTPUT_FILE.write_bytes(svg_resp.content)
-    logger.info("保存完了: %s (%d bytes)", OUTPUT_FILE, len(svg_resp.content))
+    logger.info("保存完了: %s", OUTPUT_FILE)
 
 
 if __name__ == "__main__":

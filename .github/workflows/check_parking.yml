@@ -2,7 +2,7 @@ name: 駐車場モニター（パルコシティ & ライカム）
 
 on:
   schedule:
-    # UTC 表記で 15 分おき（日本時間 = UTC+9）
+    # UTC 表記で 5 分おき（日本時間 = UTC+9）
     - cron: '*/15 * * * *'
   workflow_dispatch: # GitHub UI から手動実行も可能
 
@@ -25,27 +25,27 @@ jobs:
           cache: 'pip'
 
       - name: 依存パッケージをインストール
-        run: pip install requests beautifulsoup4 lxml
+        run: pip install requests
 
       # ── パルコシティ ──────────────────────────────────────────
-      - name: 【パルコシティ】駐車率 SVG を取得・保存
+      - name: 【パルコシティ】駐車状況 XML を取得・保存
         run: python parcocity_parking.py
 
       # ── イオンモール沖縄ライカム ──────────────────────────────
       - name: 【ライカム】駐車状況 GIF を取得・保存
         run: python rycom_parking.py
 
-      # ── 画像ファイルをまとめてコミット ────────────────────────
+      # ── ファイルをまとめてコミット ────────────────────────────
       - name: 変更があれば画像ファイルを自動コミット・プッシュ
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add parco_now.svg rycom_now.gif
+          git add parco_status.json rycom_now.gif
           # 差分がなければスキップ、あればコミット
           if git diff --staged --quiet; then
             echo "両ファイルに変更なし。スキップします。"
           else
             TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            git commit -m "chore: update parking images ${TIMESTAMP} [skip ci]"
+            git commit -m "chore: update parking data ${TIMESTAMP} [skip ci]"
             git push origin HEAD
           fi

@@ -6,6 +6,10 @@ parcocity_parking.py
 駐車場管理システム (cnt.parkingweb.jp) の XML エンドポイントを直接叩き、
 解析結果を parco_status.json に保存する。
 
+FullStatus の値と駐車率の対応:
+    16 = 50%,  17 = 60%,  18 = 70%,  19 = 80%,  20 = 90%+
+    計算式: 駐車率(%) = (FullStatus - 11) × 10
+
 使い方:
     python parcocity_parking.py
 
@@ -29,6 +33,9 @@ XML_URL = (
 )
 OUTPUT_FILE = Path("parco_status.json")
 
+# FullStatus=16 → 50%, 17 → 60%, ..., 20 → 90%
+FULL_STATUS_OFFSET = 11
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -46,6 +53,32 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+def full_status_to_rate(full_status_str: str) -> int | None:
+    """FullStatus の値を駐車率(%)に変換する。
+
+    対応表: 16=50%, 17=60%, 18=70%, 19=80%, 20=90%
+    計算式: (FullStatus - 11) × 10
+    """
+    try:
+        val = int(full_status_str)
+        rate = (val - FULL_STATUS_OFFSET) * 10
+        return max(0, min(100, rate))
+    except (ValueError, TypeError):
+        return None
+
+
+def rate_to_label(rate: int) -> str:
+    """駐車率から混雑ラベルを返す。"""
+    if rate >= 90:
+        return "非常に混雑"
+    elif rate >= 70:
+        return "混雑"
+    elif rate >= 50:
+        return "やや混雑"
+    else:
+        return "空いています"
 
 
 def parse_parking_xml(xml_text: str) -> dict:
@@ -69,13 +102,23 @@ def main() -> None:
     resp.raise_for_status()
     logger.info("取得完了 (%d bytes)", len(resp.content))
 
-    # デバッグ用: 生の XML をログ出力
-    logger.info("Raw XML:\n%s", resp.text)
-
     data = parse_parking_xml(resp.text)
     if not data:
         logger.error("XML の解析結果が空でした。")
         sys.exit(1)
+
+    # 駐車率を計算して追加
+    rate = full_status_to_rate(data.get("FullStatus", ""))
+    if rate is not None:
+        label = rate_to_label(rate)
+        data["parking_rate"] = rate
+        data["parking_label"] = label
+        logger.info("=" * 40)
+        logger.info("  駐車率: %d%%  [%s]", rate, label)
+        logger.info("  更新: %s", data.get("UpdateDate", "不明"))
+        logger.info("=" * 40)
+    else:
+        logger.warning("FullStatus の変換に失敗しました: %s", data.get("FullStatus"))
 
     OUTPUT_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
